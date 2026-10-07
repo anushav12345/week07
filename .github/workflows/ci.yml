@@ -98,15 +98,99 @@ jobs:
 
 
   # =========================================================
+  # Frontend Tests
+  # =========================================================
+  frontend-test:
+    name: Test frontend
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Check frontend files exist
+        run: |
+          test -f frontend/Dockerfile || { echo "frontend/Dockerfile is missing"; exit 1; }
+          echo "Frontend folder contents:"
+          ls -la frontend
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Run frontend unit tests (if defined)
+        working-directory: frontend
+        run: |
+          if [ -f package.json ] && node -e "const s=(require('./package.json').scripts||{}).test; process.exit(s && !s.includes('no test specified') ? 0 : 1)"; then
+            echo "Test script found - running npm test"
+            if [ -f package-lock.json ]; then npm ci; else npm install; fi
+            npm test
+          else
+            echo "No npm test script in frontend - skipping unit tests"
+          fi
+
+      - name: Build frontend Docker image
+        run: |
+          docker build -t koalatech-frontend:ci-test ./frontend
+
+      - name: Start frontend container
+        run: |
+          PORT=$(grep -i '^EXPOSE' frontend/Dockerfile | awk '{print $2}' | head -1)
+          PORT=${PORT:-80}
+          echo "Container port: $PORT"
+          docker run -d --name frontend-test \
+            --add-host user-service:127.0.0.1 \
+            --add-host student-service:127.0.0.1 \
+            --add-host lecturer-service:127.0.0.1 \
+            --add-host course-service:127.0.0.1 \
+            --add-host enrollment-service:127.0.0.1 \
+            -p 8080:$PORT \
+            koalatech-frontend:ci-test
+
+      - name: Smoke test - frontend serves home page
+        run: |
+          for i in $(seq 1 15); do
+            if curl -sf http://localhost:8080/ -o page.html; then
+              echo "Frontend responded on attempt $i"
+              break
+            fi
+            echo "Waiting for frontend... ($i)"
+            sleep 2
+          done
+
+          # Fail if the container stopped or the page never loaded
+          docker ps --filter name=frontend-test --filter status=running | grep -q frontend-test \
+            || { echo "Frontend container is not running"; exit 1; }
+          test -s page.html || { echo "Frontend did not return a page"; exit 1; }
+
+          # Fail if the response is not an HTML page
+          grep -qi "<html" page.html || { echo "Response is not an HTML page"; exit 1; }
+
+          echo "Frontend smoke test passed"
+          head -n 20 page.html
+
+      - name: Show container logs on failure
+        if: failure()
+        run: docker logs frontend-test || true
+
+      - name: Clean up
+        if: always()
+        run: docker rm -f frontend-test || true
+
+
+  # =========================================================
   # Build and Push Docker Images
   # =========================================================
   build-and-push:
     name: Build and Push ${{ matrix.image }}
     runs-on: ubuntu-latest
 
-    # All backend tests must pass before this job starts
+    # All backend AND frontend tests must pass before this job starts
     needs:
       - backend-test
+      - frontend-test
 
     # Build and push when code is pushed to main or manually triggered
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
