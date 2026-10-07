@@ -104,6 +104,14 @@ jobs:
     name: Test frontend
     runs-on: ubuntu-latest
 
+    # Same values the frontend Dockerfile uses by default
+    env:
+      VITE_USER_SERVICE_URL: /api/users
+      VITE_STUDENT_SERVICE_URL: /api/students
+      VITE_LECTURER_SERVICE_URL: /api/lecturers
+      VITE_COURSE_SERVICE_URL: /api/courses
+      VITE_ENROLLMENT_SERVICE_URL: /api/enrollments
+
     steps:
 
       - name: Checkout repository
